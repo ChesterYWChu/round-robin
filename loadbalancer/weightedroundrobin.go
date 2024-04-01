@@ -52,13 +52,29 @@ const MaxWeight = math.MaxUint16
 
 func (wrr *WeightedRoundRobin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("WeightedRoundRobin URL: %s\n", r.URL)
-
-	if len(wrr.weights) == 0 {
+	next, err := wrr.next()
+	if err != nil {
 		log.Printf("failed to find any alive instance")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	for {
+
+	startTime := time.Now()
+	wrr.instances[next].ServeHTTP(w, r)
+
+	responseTime := time.Since(startTime).Nanoseconds()
+	wrr.instances[next].SetEWMALatency(responseTime)
+	log.Printf("===========New Request===========\n")
+	log.Printf("instance: %d, responseTime: %d\n", next, responseTime)
+	log.Printf("=================================\n")
+}
+
+func (wrr *WeightedRoundRobin) next() (uint64, error) {
+	if len(wrr.weights) == 0 {
+		return 0, errors.New("weight list is empty")
+	}
+
+	for i := 0; i < len(wrr.weights); i++ {
 		next := uint64(atomic.AddUint32(&wrr.current, 1))
 
 		instanceIdx := next % uint64(len(wrr.weights))
@@ -66,28 +82,15 @@ func (wrr *WeightedRoundRobin) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		weight := uint64(wrr.weights[instanceIdx])
 
 		mod := (weight * round) % MaxWeight
-
-		log.Printf("next: %d\n", next)
-		log.Printf("instanceIdx: %d\n", instanceIdx)
-		log.Printf("round: %d\n", round)
-		log.Printf("weight: %d\n", weight)
-		log.Printf("mod: %d\n", mod)
-
 		if mod > weight {
 			continue
 		}
 		if !wrr.instances[instanceIdx].IsAlive() {
 			continue
 		}
-
-		startTime := time.Now()
-		wrr.instances[instanceIdx].ServeHTTP(w, r)
-
-		responseTime := time.Since(startTime).Nanoseconds()
-		wrr.instances[instanceIdx].SetEWMALatency(responseTime)
-		log.Printf("========responseTime: %d\n", responseTime)
-		return
+		return instanceIdx, nil
 	}
+	return 0, errors.New("failed to find any alive instance")
 }
 
 func (wrr *WeightedRoundRobin) HealthCheck() {
