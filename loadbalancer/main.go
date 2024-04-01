@@ -1,171 +1,72 @@
 package main
 
 import (
-	"errors"
+	"context"
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
 )
 
-type LoadBalancerServer struct {
-	lb      LoadBalancer
-	handler http.Handler
+type Balancer interface {
+	ServeHTTP(http.ResponseWriter, *http.Request)
+	HealthCheck()
+	GetHealthCheckInterval() int
 }
 
-func NewLoadBalancerServer(lb LoadBalancer) *LoadBalancerServer {
-	// run health check for the loadbalancer instances
-	go lb.RunHealthCheck()
+type LoadBalancerServer struct {
+	balancer Balancer
+	handler  http.Handler
 
+	stopHealthCheck func()
+}
+
+func NewLoadBalancerServer(b Balancer) *LoadBalancerServer {
 	// route all POST requests to loadbalancer
 	r := mux.NewRouter()
-	r.PathPrefix("/").Methods("POST").Handler(lb)
+	r.PathPrefix("/").Methods("POST").Handler(b)
 	return &LoadBalancerServer{
-		lb:      lb,
-		handler: r,
+		balancer: b,
+		handler:  r,
 	}
+}
+
+func (h *LoadBalancerServer) Start() {
+	// run health check for the loadbalancer instances
+	var ctx context.Context
+	ctx, h.stopHealthCheck = context.WithCancel(context.Background())
+	h.RunHealthCheck(ctx, h.balancer.GetHealthCheckInterval(), h.balancer.HealthCheck)
+}
+
+func (h *LoadBalancerServer) Close() {
+	if h.stopHealthCheck != nil {
+		h.stopHealthCheck()
+		h.stopHealthCheck = nil
+	}
+}
+
+func (h *LoadBalancerServer) RunHealthCheck(ctx context.Context, intervalInSeconds int, healthCheckFunc func()) {
+	go func() {
+		ticker := time.NewTicker(time.Second * time.Duration(intervalInSeconds))
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				healthCheckFunc()
+			}
+		}
+	}()
 }
 
 func (h *LoadBalancerServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("MyHTTPHandler URL: %s\n", r.URL)
 	h.handler.ServeHTTP(w, r)
-}
-
-type LoadBalancer interface {
-	ServeHTTP(http.ResponseWriter, *http.Request)
-	RunHealthCheck()
-}
-
-type WeightedRoundRobin struct {
-	RoundRobin
-}
-
-type RoundRobin struct {
-	instances                    []*Instance
-	current                      int
-	healthCheckIntervalInSeconds int
-	nextInstanceRWMutex          sync.RWMutex
-}
-
-func NewRoundRobin(urls []string, healthCheckIntervalInSeconds int) (*RoundRobin, error) {
-	if len(urls) == 0 {
-		return nil, errors.New("the input url list is empty")
-	}
-	instances := []*Instance{}
-	for _, u := range urls {
-		instanceURL, err := url.Parse(u)
-		if err != nil {
-			log.Printf("failed to parse url:%s with error: %s\n", u, err.Error())
-			return nil, err
-		}
-		proxy := httputil.NewSingleHostReverseProxy(instanceURL)
-		instances = append(instances, &Instance{
-			URL:          instanceURL,
-			ReverseProxy: proxy,
-			alive:        true,
-		})
-	}
-	return &RoundRobin{
-		instances:                    instances,
-		current:                      0,
-		healthCheckIntervalInSeconds: healthCheckIntervalInSeconds,
-	}, nil
-}
-
-func (rr *RoundRobin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Printf("RoundRobin URL: %s\n", r.URL)
-	nextInstance := rr.nextInstance()
-	if nextInstance == nil {
-		log.Printf("failed to find any alive instance")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		return
-	}
-	nextInstance.ReverseProxy.ServeHTTP(w, r)
-}
-
-func (wrr *WeightedRoundRobin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Printf("WeightedRoundRobin URL: %s\n", r.URL)
-
-}
-
-func (rr *RoundRobin) nextInstance() *Instance {
-	rr.nextInstanceRWMutex.Lock()
-	defer rr.nextInstanceRWMutex.Unlock()
-
-	for attempts := 0; attempts < len(rr.instances); attempts++ {
-		rr.current++
-		if rr.current >= len(rr.instances) {
-			rr.current = 0
-		}
-		if rr.instances[rr.current].IsAlive() {
-			return rr.instances[rr.current]
-		}
-	}
-	return nil
-}
-
-func (rr *RoundRobin) RunHealthCheck() {
-	for {
-		rr.healthCheck()
-		time.Sleep(time.Second * time.Duration(rr.healthCheckIntervalInSeconds))
-	}
-}
-
-func (rr *RoundRobin) healthCheck() {
-	for _, i := range rr.instances {
-		alive := i.CheckAliveness()
-		i.SetAlive(alive)
-	}
-}
-
-// type Instance interface {
-// 	CheckAliveness() bool
-// 	IsAlive() bool
-// 	SetAlive(alive bool)
-// }
-
-type Instance struct {
-	URL          *url.URL
-	ReverseProxy *httputil.ReverseProxy
-
-	mu    sync.RWMutex
-	alive bool
-}
-
-// type WeightedInstance struct {
-// 	Instance
-// }
-
-func (i *Instance) CheckAliveness() bool {
-	conn, err := net.DialTimeout("tcp", i.URL.Host, 1*time.Second)
-	if err != nil {
-		log.Printf("failed to connect to url:%s with error:%s", i.URL.Host, err.Error())
-		return false
-	}
-	defer conn.Close()
-	return true
-}
-
-func (i *Instance) IsAlive() bool {
-	var alive bool
-	i.mu.RLock()
-	alive = i.alive
-	i.mu.RUnlock()
-	return alive
-}
-
-func (i *Instance) SetAlive(alive bool) {
-	i.mu.Lock()
-	i.alive = alive
-	i.mu.Unlock()
 }
 
 func main() {
@@ -178,14 +79,19 @@ func main() {
 	if urls == "" {
 		log.Fatal("Input urls is empty. See \"go run main.go -h\" for more info.")
 	}
-	roundRobin, err := NewRoundRobin(strings.Split(urls, ","), 5)
+
+	// balancer, err := NewRoundRobin(strings.Split(urls, ","), 5)
+	balancer, err := NewWeightedRoundRobin(strings.Split(urls, ","), 5)
 	if err != nil {
 		log.Fatal(err)
 	}
-	handler := NewLoadBalancerServer(roundRobin)
+	lbSrv := NewLoadBalancerServer(balancer)
+	lbSrv.Start()
+	defer lbSrv.Close()
+
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: handler,
+		Handler: lbSrv,
 	}
 
 	log.Printf("listen on: %s\n", srv.Addr)
