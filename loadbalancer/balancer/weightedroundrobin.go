@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// WeightedRoundRobin implements balancer interface
 type WeightedRoundRobin struct {
 	instances                    []WRRInstance
 	current                      uint32
@@ -20,6 +21,7 @@ type WeightedRoundRobin struct {
 	mu                           sync.RWMutex
 }
 
+// NewWeightedRoundRobin new a WeightedRoundRobin balancer
 func NewWeightedRoundRobin(urls []string, healthCheckIntervalInSeconds int) (*WeightedRoundRobin, error) {
 	if len(urls) == 0 {
 		return nil, errors.New("the input url list is empty")
@@ -51,6 +53,7 @@ func NewWeightedRoundRobin(urls []string, healthCheckIntervalInSeconds int) (*We
 
 const MaxWeight = math.MaxUint16
 
+// ServeHTTP implements http.Handler
 func (wrr *WeightedRoundRobin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	next, err := wrr.next()
 	if err != nil {
@@ -70,24 +73,31 @@ func (wrr *WeightedRoundRobin) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	log.Printf("instance: %d, responseTime: %d\n", next, responseTime)
 }
 
+// next decides which instanceIndex the balancer should send the next request to
 func (wrr *WeightedRoundRobin) next() (uint64, error) {
 	wrr.mu.RLock()
 	defer wrr.mu.RUnlock()
 
-	length := len(wrr.weights)
+	length := uint64(len(wrr.weights))
 	if length == 0 {
 		return 0, errors.New("weight list is empty")
 	}
 
-	for i := 0; i < length; i++ {
+	// loop to find an alive instance and retry no more than `length` times
+	for i := uint64(0); i < length; i++ {
 		next := uint64(atomic.AddUint32(&wrr.current, 1))
-
-		instanceIdx := next % uint64(length)
-		round := next / uint64(length)
+		instanceIdx := next % length
+		// get instance's weight
 		weight := uint64(wrr.weights[instanceIdx])
 
+		// Found out which `round` we are running
+		round := next / length
+		// Mod helps us determine if we are going to pick or skip this instance for this round.
+		// The chance of picking this instance is proportion to (weight / MaxWeight), where
+		// the `weight` range from [0, MaxWeight].
+		// Multiply `weight` with `round` and then take a modulus will evenly spread out
+		// the picking distribution for this instance between different rounds.
 		mod := (weight * round) % MaxWeight
-
 		if mod > weight {
 			continue
 		}
@@ -96,9 +106,12 @@ func (wrr *WeightedRoundRobin) next() (uint64, error) {
 		}
 		return instanceIdx, nil
 	}
+	// all registered instances are not alive
 	return 0, errors.New("failed to find any alive instance")
 }
 
+// HealthCheck run a round of health check on its instances and recalculate the balancer.weights list
+// based on the latest EWMA latency values of the instances
 func (wrr *WeightedRoundRobin) HealthCheck() {
 	wrr.mu.Lock()
 	defer wrr.mu.Unlock()
@@ -136,10 +149,12 @@ func (wrr *WeightedRoundRobin) HealthCheck() {
 	log.Printf("weights: %+v\n", wrr.weights)
 }
 
+// GetHealthCheckInterval return its health check interval configuration
 func (wrr *WeightedRoundRobin) GetHealthCheckInterval() int {
 	return wrr.healthCheckIntervalInSeconds
 }
 
+// WRRInstance decorate the RRInstance interface with new functionality
 type WRRInstance interface {
 	RRInstance
 
@@ -147,6 +162,7 @@ type WRRInstance interface {
 	GetEWMALatency() float64
 }
 
+// WRRInstanceImpl implements the WRRInstance interface
 type WRRInstanceImpl struct {
 	RRInstanceImpl
 
@@ -155,6 +171,7 @@ type WRRInstanceImpl struct {
 	ewmaLatency float64
 }
 
+// SetEWMALatency takes new latency as input to recalculate and set the ewmaLatency field
 func (i *WRRInstanceImpl) SetEWMALatency(newLatency int64) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -163,6 +180,7 @@ func (i *WRRInstanceImpl) SetEWMALatency(newLatency int64) {
 	i.ewmaLatency = i.alpha*newLatencyFloat + (1-i.alpha)*i.ewmaLatency
 }
 
+// GetEWMALatency returns the ewmaLatency field
 func (i *WRRInstanceImpl) GetEWMALatency() float64 {
 	i.mu.RLock()
 	defer i.mu.RUnlock()

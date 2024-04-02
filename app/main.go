@@ -38,6 +38,7 @@ func main() {
 	flag.IntVar(&flagPort, "port", 8081, "port to listen (default:8081)")
 	flag.Parse()
 
+	// start mux server and serve the JSON /echo API
 	r := mux.NewRouter()
 	r.HandleFunc("/echo", handleEcho).Methods("POST")
 
