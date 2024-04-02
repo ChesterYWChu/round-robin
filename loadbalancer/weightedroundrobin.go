@@ -17,6 +17,7 @@ type WeightedRoundRobin struct {
 	current                      uint32
 	healthCheckIntervalInSeconds int
 	weights                      []uint16
+	mu                           sync.RWMutex
 }
 
 func NewWeightedRoundRobin(urls []string, healthCheckIntervalInSeconds int) (*WeightedRoundRobin, error) {
@@ -51,7 +52,6 @@ func NewWeightedRoundRobin(urls []string, healthCheckIntervalInSeconds int) (*We
 const MaxWeight = math.MaxUint16
 
 func (wrr *WeightedRoundRobin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Printf("WeightedRoundRobin URL: %s\n", r.URL)
 	next, err := wrr.next()
 	if err != nil {
 		log.Printf("failed to find any alive instance")
@@ -64,21 +64,26 @@ func (wrr *WeightedRoundRobin) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 	responseTime := time.Since(startTime).Nanoseconds()
 	wrr.instances[next].SetEWMALatency(responseTime)
+
+	// log instance index for demo
 	log.Printf("===========New Request===========\n")
 	log.Printf("instance: %d, responseTime: %d\n", next, responseTime)
-	log.Printf("=================================\n")
 }
 
 func (wrr *WeightedRoundRobin) next() (uint64, error) {
-	if len(wrr.weights) == 0 {
+	wrr.mu.RLock()
+	defer wrr.mu.RUnlock()
+
+	length := len(wrr.weights)
+	if length == 0 {
 		return 0, errors.New("weight list is empty")
 	}
 
-	for i := 0; i < len(wrr.weights); i++ {
+	for i := 0; i < length; i++ {
 		next := uint64(atomic.AddUint32(&wrr.current, 1))
 
-		instanceIdx := next % uint64(len(wrr.weights))
-		round := next / uint64(len(wrr.weights))
+		instanceIdx := next % uint64(length)
+		round := next / uint64(length)
 		weight := uint64(wrr.weights[instanceIdx])
 
 		mod := (weight * round) % MaxWeight
@@ -94,6 +99,9 @@ func (wrr *WeightedRoundRobin) next() (uint64, error) {
 }
 
 func (wrr *WeightedRoundRobin) HealthCheck() {
+	wrr.mu.Lock()
+	defer wrr.mu.Unlock()
+
 	for _, i := range wrr.instances {
 		alive := i.CheckAliveness()
 		i.SetAlive(alive)
@@ -102,6 +110,9 @@ func (wrr *WeightedRoundRobin) HealthCheck() {
 	length := len(wrr.instances)
 	weights := make([]float64, length)
 	max := float64(0.0)
+
+	// log health check result for demo
+	log.Printf("===========Health Check===========\n")
 	for i, instance := range wrr.instances {
 		if !instance.IsAlive() {
 			weights[i] = 0
@@ -121,7 +132,6 @@ func (wrr *WeightedRoundRobin) HealthCheck() {
 		scaledWeights[i] = uint16(math.Round(scalingFactor * w))
 	}
 	wrr.weights = scaledWeights
-
 	log.Printf("weights: %+v\n", wrr.weights)
 }
 

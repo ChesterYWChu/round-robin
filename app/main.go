@@ -6,13 +6,17 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/mux"
 )
 
-// Usage: curl -d '{"game":"Mobile Legends", "gamerID":"GYUTDTE", "points":20}' -H "Content-Type: application/json" -X POST http://localhost:8080/echo
+// Usage: go run app/main.go -port 8081
+// Example CURL: curl -d '{"game":"Mobile Legends", "gamerID":"GYUTDTE", "points":20}' -H "Content-Type: application/json" -X POST http://localhost:8081/echo
 
 func handleEcho(w http.ResponseWriter, r *http.Request) {
+	time.Sleep(500000 * time.Nanosecond)
+
 	raw, _ := io.ReadAll(r.Body)
 	fmt.Fprintf(w, "post\n")
 	w.Header().Set("Content-Type", "application/json")

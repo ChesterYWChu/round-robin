@@ -8,14 +8,14 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type RoundRobin struct {
 	instances                    []RRInstance
-	current                      int
+	current                      uint32
 	healthCheckIntervalInSeconds int
-	nextInstanceRWMutex          sync.RWMutex
 }
 
 func NewRoundRobin(urls []string, healthCheckIntervalInSeconds int) (*RoundRobin, error) {
@@ -44,37 +44,43 @@ func NewRoundRobin(urls []string, healthCheckIntervalInSeconds int) (*RoundRobin
 }
 
 func (rr *RoundRobin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Printf("RoundRobin URL: %s\n", r.URL)
-	nextInstance := rr.nextInstance()
-	if nextInstance == nil {
+	next, err := rr.next()
+	if err != nil {
 		log.Printf("failed to find any alive instance")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	nextInstance.ServeHTTP(w, r)
+	rr.instances[next].ServeHTTP(w, r)
+
+	// log instance index for demo
+	log.Printf("===========New Request===========\n")
+	log.Printf("instance: %d\n", next)
 }
 
-func (rr *RoundRobin) nextInstance() RRInstance {
-	rr.nextInstanceRWMutex.Lock()
-	defer rr.nextInstanceRWMutex.Unlock()
+func (rr *RoundRobin) next() (uint32, error) {
+	length := uint32(len(rr.instances))
+	for attempts := uint32(0); attempts < length; attempts++ {
+		next := atomic.AddUint32(&rr.current, 1)
+		instanceIdx := next % length
 
-	for attempts := 0; attempts < len(rr.instances); attempts++ {
-		rr.current++
-		if rr.current >= len(rr.instances) {
-			rr.current = 0
-		}
-		if rr.instances[rr.current].IsAlive() {
-			return rr.instances[rr.current]
+		if rr.instances[instanceIdx].IsAlive() {
+			return instanceIdx, nil
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 func (rr *RoundRobin) HealthCheck() {
-	for _, i := range rr.instances {
-		alive := i.CheckAliveness()
-		i.SetAlive(alive)
+	aliveness := make([]bool, len(rr.instances))
+	for i, instance := range rr.instances {
+		alive := instance.CheckAliveness()
+		instance.SetAlive(alive)
+		aliveness[i] = alive
 	}
+
+	// log health check result for demo
+	log.Printf("===========Health Check===========\n")
+	log.Printf("Aliveness: %+v\n", aliveness)
 }
 
 func (rr *RoundRobin) GetHealthCheckInterval() int {

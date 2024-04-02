@@ -12,6 +12,9 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// Usage: go run loadbalancer/*.go -port 8080 -urls http://localhost:8081,http://localhost:8082,http://localhost:8083
+// Example CURL: curl -d '{"game":"Mobile Legends", "gamerID":"GYUTDTE", "points":20}' -H "Content-Type: application/json" -X POST http://localhost:8080/echo
+
 type Balancer interface {
 	ServeHTTP(http.ResponseWriter, *http.Request)
 	HealthCheck()
@@ -65,7 +68,6 @@ func (h *LoadBalancerServer) RunHealthCheck(ctx context.Context, intervalInSecon
 }
 
 func (h *LoadBalancerServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Printf("MyHTTPHandler URL: %s\n", r.URL)
 	h.handler.ServeHTTP(w, r)
 }
 
@@ -80,8 +82,8 @@ func main() {
 		log.Fatal("Input urls is empty. See \"go run main.go -h\" for more info.")
 	}
 
-	// balancer, err := NewRoundRobin(strings.Split(urls, ","), 5)
-	balancer, err := NewWeightedRoundRobin(strings.Split(urls, ","), 5)
+	balancer, err := NewRoundRobin(strings.Split(urls, ","), 5)
+	// balancer, err := NewWeightedRoundRobin(strings.Split(urls, ","), 5)
 	if err != nil {
 		log.Fatal(err)
 	}
