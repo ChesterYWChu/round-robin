@@ -1,6 +1,7 @@
 package main
 
 import (
+	"app/loadbalancer/balancer"
 	"context"
 	"flag"
 	"fmt"
@@ -12,7 +13,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Usage: go run loadbalancer/*.go -port 8080 -urls http://localhost:8081,http://localhost:8082,http://localhost:8083
+// Usage: go run loadbalancer/main.go -port 8080 -urls http://localhost:8081,http://localhost:8082,http://localhost:8083
 // Example CURL: curl -d '{"game":"Mobile Legends", "gamerID":"GYUTDTE", "points":20}' -H "Content-Type: application/json" -X POST http://localhost:8080/echo
 
 type Balancer interface {
@@ -85,8 +86,8 @@ func main() {
 	// new a balancer to use
 	// RoundRobin balancer support simple round robin algorithm
 	// WeightedRoundRobin balancer support weighted round robin based on the request response time
-	balancer, err := NewRoundRobin(strings.Split(urls, ","), 5)
-	// balancer, err := NewWeightedRoundRobin(strings.Split(urls, ","), 5)
+	balancer, err := balancer.NewRoundRobin(strings.Split(urls, ","), 5)
+	// balancer, err := balancer.NewWeightedRoundRobin(strings.Split(urls, ","), 5)
 	if err != nil {
 		log.Fatal(err)
 	}
