@@ -87,6 +87,7 @@ func (wrr *WeightedRoundRobin) next() (uint64, error) {
 		weight := uint64(wrr.weights[instanceIdx])
 
 		mod := (weight * round) % MaxWeight
+
 		if mod > weight {
 			continue
 		}

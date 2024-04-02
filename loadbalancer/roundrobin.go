@@ -59,6 +59,9 @@ func (rr *RoundRobin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (rr *RoundRobin) next() (uint32, error) {
 	length := uint32(len(rr.instances))
+	if length == 0 {
+		return 0, errors.New("instance list is empty")
+	}
 	for attempts := uint32(0); attempts < length; attempts++ {
 		next := atomic.AddUint32(&rr.current, 1)
 		instanceIdx := next % length
@@ -67,7 +70,7 @@ func (rr *RoundRobin) next() (uint32, error) {
 			return instanceIdx, nil
 		}
 	}
-	return 0, nil
+	return 0, errors.New("failed to find any alive instance")
 }
 
 func (rr *RoundRobin) HealthCheck() {

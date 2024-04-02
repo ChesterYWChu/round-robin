@@ -14,8 +14,16 @@ import (
 // Usage: go run app/main.go -port 8081
 // Example CURL: curl -d '{"game":"Mobile Legends", "gamerID":"GYUTDTE", "points":20}' -H "Content-Type: application/json" -X POST http://localhost:8081/echo
 
+// handleEcho simply echo back the JSON body it received
 func handleEcho(w http.ResponseWriter, r *http.Request) {
 	time.Sleep(500000 * time.Nanosecond)
+
+	contentType := r.Header.Get("Content-type")
+	if contentType != "application/json" {
+		log.Printf("failed to find any alive instance")
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	raw, _ := io.ReadAll(r.Body)
 	fmt.Fprintf(w, "post\n")

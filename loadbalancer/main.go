@@ -82,20 +82,25 @@ func main() {
 		log.Fatal("Input urls is empty. See \"go run main.go -h\" for more info.")
 	}
 
+	// new a balancer to use
+	// RoundRobin balancer support simple round robin algorithm
+	// WeightedRoundRobin balancer support weighted round robin based on the request response time
 	balancer, err := NewRoundRobin(strings.Split(urls, ","), 5)
 	// balancer, err := NewWeightedRoundRobin(strings.Split(urls, ","), 5)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// new a load balancer server and start the its health check
 	lbSrv := NewLoadBalancerServer(balancer)
 	lbSrv.Start()
 	defer lbSrv.Close()
 
+	// start http server
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
 		Handler: lbSrv,
 	}
-
 	log.Printf("listen on: %s\n", srv.Addr)
 	srv.ListenAndServe()
 }
