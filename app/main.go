@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/gorilla/mux"
 )
@@ -16,19 +15,19 @@ import (
 
 // handleEcho simply echo back the JSON body it received
 func handleEcho(w http.ResponseWriter, r *http.Request) {
-	time.Sleep(500000 * time.Nanosecond)
+	// log.Printf("Sleep for 500 us\n")
+	// time.Sleep(500 * time.Microsecond)
 
 	contentType := r.Header.Get("Content-type")
 	if contentType != "application/json" {
-		log.Printf("failed to find any alive instance")
+		log.Printf("invalid conntent type: %s\n", contentType)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
 	raw, _ := io.ReadAll(r.Body)
-	fmt.Fprintf(w, "post\n")
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, "%s\n", raw)
+	fmt.Fprintf(w, "%s", raw)
 	log.Printf("Handle request: %s%s\n", r.Host, r.RequestURI)
 
 }
@@ -38,7 +37,7 @@ func main() {
 	flag.IntVar(&flagPort, "port", 8081, "port to listen (default:8081)")
 	flag.Parse()
 
-	// start mux server and serve the JSON /echo API
+	// start mux server and serve the JSON echo back API (/echo)
 	r := mux.NewRouter()
 	r.HandleFunc("/echo", handleEcho).Methods("POST")
 

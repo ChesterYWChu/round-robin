@@ -102,7 +102,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// new a load balancer server and start the its health check
+	// new a load balancer server and start its health check
 	lbSrv := NewLoadBalancerServer(balancer)
 	lbSrv.Start()
 	defer lbSrv.Close()
